@@ -180,21 +180,3 @@ class HashTable(object):
                 k, v = m
                 self.set(k,v)
         return self.slots
-
-
-"""
-H=HashTable()
-H.set("Arts",90)
-H.set("Computer Science",12)
-H.set("Literature",11)
-H.set("Physics",12)
-H.set("Biology",11)
-H.set("Computer Science",5)
-H.set("Literature",9)
-H.set("Physics",3)
-H.set("8",9)
-H.display_hash()
-print(H.get("Biology"))
-H.delete("Physics")
-print(H.slots)
-"""
