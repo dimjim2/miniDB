@@ -6,6 +6,7 @@ import os
 from btree import Btree
 import shutil
 from misc import split_condition
+from HashTable import HashTable
 
 class Database:
     '''
@@ -40,7 +41,7 @@ class Database:
         self.create_table('meta_length',  ['table_name', 'no_of_rows'], [str, int])
         self.create_table('meta_locks',  ['table_name', 'locked'], [str, bool])
         self.create_table('meta_insert_stack',  ['table_name', 'indexes'], [str, list])
-        self.create_table('meta_indexes',  ['table_name', 'index_name'], [str, str])
+        self.create_table('meta_indexes',  ['table_name', 'index_name','index_type','column_index'], [str, str,str,str])
         self.save()
 
 
@@ -297,7 +298,7 @@ class Database:
         table_name -> table's name (needs to exist in database)
         columns -> The columns that will be part of the output table (use '*' to select all the available columns)
         condition -> a condition using the following format :
-                    'column[<,<=,==,>=,>]value' or
+                    'column [<,<=,==,>=,>] value' or
                     'value[<,<=,==,>=,>]column'.
 
                     operatores supported -> (<,<=,==,>=,>)
@@ -306,6 +307,7 @@ class Database:
         top_k -> A number (int) that defines the number of rows that will be returned. Def: None (all rows)
         save_as -> The name that will be used to save the resulting table in the database. Def: None (no save)
         return_object -> If true, the result will be a table object (usefull for internal usage). Def: False (the result will be printed)
+        Hash select supports only equality queries (ερωτήσεις ταυτότητας)
 
         '''
         self.load(self.savedir)
@@ -314,10 +316,20 @@ class Database:
         self.lockX_table(table_name)
         if condition is not None:
             condition_column = split_condition(condition)[0]
-        if self._has_index(table_name) and condition_column==self.tables[table_name].column_names[self.tables[table_name].pk_idx]:
-            index_name = self.select('meta_indexes', '*', f'table_name=={table_name}', return_object=True).index_name[0]
-            bt = self._load_idx(index_name)
-            table = self.tables[table_name]._select_where_with_btree(columns, bt, condition, order_by, asc, top_k)
+            operator=split_condition(condition)[1]
+        #getting the position from meta_indexes table where is Hash
+        position = 0
+        for i in range(0,len(self.tables['meta_indexes'].column_index)):
+            if condition_column==self.tables['meta_indexes'].column_index[i] and "Hash"==self.tables['meta_indexes'].index_type[i] and operator=='==':
+                position = i
+                break
+        #if is Hash
+        #print("HHTYY ",position)
+        if self._has_index(table_name) and condition_column==self.tables['meta_indexes'].column_index[position] and operator=='==' and "Hash"==self.tables['meta_indexes'].index_type[position]:
+            print ("Selecting with Hash")
+            index_name = self.tables['meta_indexes'].index_name[position]
+            hs = self._load_idx(index_name)
+            table = self.tables[table_name]._select_where_with_hash(columns, hs, condition, order_by, asc, top_k)
         else:
             table = self.tables[table_name]._select_where(columns, condition, order_by, asc, top_k)
         self.unlock_table(table_name)
@@ -386,6 +398,112 @@ class Database:
                 return res
             else:
                 res.show()
+    def hash_join(self, left_table_name, right_table_name, condition, save_as=None, return_object=False):
+        '''
+        Hash join two tables that are part of the database where condition is met.
+        left_table_name -> left table's name (needs to exist in database)
+        right_table_name -> right table's name (needs to exist in database)
+        condition supports only equality between column in a format column_left==column_right
+        because hash indexes does not support range queries but only equality queries(Τα ευρετήρια κατακερματισμού υποστηρίζουν
+        μόνο ερωτήσεις ταυτότητας και όχι διαστήματος)
+        In order hash join to work it is mandatory to exist hash indexes in each condition column.
+        save_as -> The name that will be used to save the resulting table in the database. Def: None (no save)
+        return_object -> If true, the result will be a table object (usefull for internal usage). Def: False (the result will be printed)
+        '''
+        if condition is None:
+            return
+        left_condition_column= split_condition(condition)[0]
+        right_condition_column=split_condition(condition)[2]
+        print("condition column of left table",left_condition_column)
+        print("condition column of right table ",right_condition_column)
+        if left_condition_column in self.tables[left_table_name].column_names and right_condition_column in self.tables[right_table_name].column_names:
+            self.load(self.savedir)
+            if self.is_locked(left_table_name) or self.is_locked(right_table_name):
+                print(f'Table/Tables are currently locked')
+                return
+            position1 = -1
+            position2 =-1
+            #find position of row in meta_indexes table where table_name equals with left_table name,index_type is Hash and column_index==left_condition_column
+            for i in range(0,len(self.tables['meta_indexes'].column_index)):
+                if left_condition_column==self.tables['meta_indexes'].column_index[i] and "Hash"==self.tables['meta_indexes'].index_type[i] and left_table_name==self.tables['meta_indexes'].table_name[i] :
+                    position1= i
+                    break
+            #find position of row in meta_indexes table where table_name equals with right_table name,index_type is Hash and column_index==right_condition_column
+            for i in range(0,len(self.tables['meta_indexes'].column_index)):
+                if right_condition_column==self.tables['meta_indexes'].column_index[i] and "Hash"==self.tables['meta_indexes'].index_type[i] and right_table_name==self.tables['meta_indexes'].table_name[i]:
+                    position2= i
+                    break
+            if(position1>=0):
+                #find index_name for the left_table
+                index_name1=self.tables['meta_indexes'].index_name[position1]
+
+                print (index_name1)
+            else:
+                #It does not exist a hash index in left_table in left_condition_column
+                print("make a hash index for left  table ",left_table_name," in column ",left_condition_column)
+                return
+            if (position2>=0):
+                #find index_name for the right_table
+                index_name2=self.tables['meta_indexes'].index_name[position2]
+                print (index_name2)
+            else:
+                #It does not exist a hash index in right_table in right_condition_column
+                print("make a hash index for right table ",right_table_name," in column ",right_condition_column)
+                return
+            # get the column names of both tables with the table name in front
+            # ex. for left -> name becomes left_table_name_name etc
+            left_names = [f'{self.tables[left_table_name]._name}_{colname}' for colname in self.tables[left_table_name].column_names]
+            right_names = [f'{self.tables[right_table_name]._name}_{colname}' for colname in self.tables[right_table_name].column_names]
+            # define the new tables name, its column names and types
+            join_table_name = f'{self.tables[left_table_name]._name}_join_{self.tables[right_table_name]._name}'
+            #rint("join_table_name",join_table_name)
+            join_table_colnames = left_names+right_names
+            #print("join tables colnames",join_table_colnames)
+            join_table_coltypes = self.tables[left_table_name].column_types+self.tables[right_table_name].column_types
+            #print("join table coltypes",join_table_coltypes)
+            join_table = Table(name=join_table_name, column_names=join_table_colnames, column_types= join_table_coltypes)
+            # count the number of operations (<,> etc)
+            no_of_ops = 0
+            #load Hashtables
+            left_hs = self._load_idx(index_name1)
+            right_hs= self._load_idx(index_name2)
+            #buckets for left_table
+            slots_left=left_hs.slots
+            #buckets for right_table
+            slots_right=right_hs.slots
+            #for each pair of partitions(slots_left[i],slots_right[i])
+            for i in range(len(slots_left)):
+                slot_left=slots_left[i]
+                slot_right=slots_right[i]
+                #for each record r of slot_left[i]
+                for j,l in enumerate(slot_left):
+                    key, value = l
+                    #Probe relevant relevant records s in slot_right[i]
+                    for k,m in enumerate(slot_right):
+                        key1, value1 = m
+                        no_of_ops +=1
+                        #IF key==key1(r[A]=s[B]) THEN output (r,s)
+                        if(key==key1):
+                            #print("you must join row left ",value ,"with row right ",value1)
+                            join_table._insert(self.tables[left_table_name].data[value]+self.tables[right_table_name].data[value1])
+            #oder join_table on first column of table
+            order_column=join_table.column_names[0]
+            join_table=join_table.order_by(order_column,True)
+            if save_as is not None:
+                join_table._name = save_as
+                self.table_from_object(join_table)
+            else:
+                if return_object:
+                    return join_table
+                else:
+                    print(f'## Select ops no. -> {no_of_ops}')
+                    print(f'# Left table size -> {len(self.tables[left_table_name].data)}')
+                    print(f'# Right table size -> {len(self.tables[right_table_name].data)}')
+                    join_table.show()
+
+        else :
+            print("Error in condition.")
+            raise Exception(f'Columns dont exist in one or both tables.')
 
     def lockX_table(self, table_name):
         '''
@@ -508,44 +626,102 @@ class Database:
 
 
     # indexes
-    def create_index(self, table_name, index_name, index_type='Btree'):
+    def create_index(self,table_name,index_name,column='pk_idx',index_type='Btree'):
         '''
-        Create an index on a specified table with a given name.
-        Important: An index can only be created on a primary key. Thus the user does not specify the column
+        Create an index on a specified table with a given name,and with specified column.
+        Important: An index can either be created on a primary key either everywhere else
+        In order to make an index on a column that is not the primary key just specify column
 
         table_name -> table's name (needs to exist in database)
         index_name -> name of the created index
+        Specify index_type (Hash)  in order to make a hash index
         '''
-        if self.tables[table_name].pk_idx is None: # if no primary key, no index
-            print('## ERROR - Cant create index. Table has no primary key.')
+        if self.tables[table_name].pk_idx is None and not(column in self.tables[table_name].column_names):
+            print('If you want to create an index either specify the column you wish for creating the index or specify the primary key')
             return
+
         if index_name not in self.tables['meta_indexes'].index_name:
-            # currently only btree is supported. This can be changed by adding another if.
             if index_type=='Btree':
                 print('Creating Btree index.')
                 # insert a record with the name of the index and the table on which it's created to the meta_indexes table
-                self.tables['meta_indexes']._insert([table_name, index_name])
+                self.tables['meta_indexes']._insert([table_name, index_name,index_type,column])
+                #self.tables['meta_types']._insert([index_type])
                 # crate the actual index
-                self._construct_index(table_name, index_name)
+                self._construct_index(table_name, index_name,column)
                 self.save()
+            elif index_type=='Hash':
+                print('Creating Hash index')
+                self.tables['meta_indexes']._insert([table_name, index_name,index_type,column])
+                #seft.tables['meta_types']._insert([index_type])
+                self._construct_hash_index(table_name, index_name,column)
+                self.save()
+
         else:
             print('## ERROR - Cant create index. Another index with the same name already exists.')
             return
 
-    def _construct_index(self, table_name, index_name):
+
+
+
+
+    def _construct_index(self, table_name, index_name,column):
         '''
         Construct a btree on a table and save.
 
         table_name -> table's name (needs to exist in database)
         index_name -> name of the created index
+        column-> column in which index will be made
         '''
         bt = Btree(3) # 3 is arbitrary
+        if column=='pk_idx':
+            for idx, key in enumerate(self.tables[table_name].columns[self.tables[table_name].pk_idx]):
+                print("key ",key,"indexes ",idx)
+        else:
 
         # for each record in the primary key of the table, insert its value and index to the btree
-        for idx, key in enumerate(self.tables[table_name].columns[self.tables[table_name].pk_idx]):
-            bt.insert(key, idx)
+            for idx, key in enumerate(self.tables[table_name].columns[self.tables[table_name].column_names.index(column)]):
+                print("key ",key,"indexes ",idx)
+                bt.insert(key, idx)
         # save the btree
         self._save_index(index_name, bt)
+    def _construct_hash_index(self, table_name, index_name,column):
+        '''
+        Construct a hashTable save.
+
+        table_name -> table's name (needs to exist in database)
+        index_name -> name of the created index
+        column-> column in which index will be made
+        '''
+        H=HashTable()
+        if column=='pk_idx':
+            for idx, key in enumerate(self.tables[table_name].columns[self.tables[table_name].pk_idx]):
+                print("key ",key,"indexes ",idx)
+                H.set(key,idx)
+        else:
+            for idx, key in enumerate(self.tables[table_name].columns[self.tables[table_name].column_names.index(column)]):
+                print("key ",key,"indexes ",idx)
+                #add to hashtable
+                H.set(key,idx)
+        self._save_index(index_name,H)
+    def drop_index(self,name):
+        try:
+            #try to load the idx with specified index_name.If it does not exist
+            #we catch the exception
+            idx=self._load_idx(name)
+            if(idx !=None):
+            #Open the pickle file in 'wb' so that you can write and dump the empty variable
+            #openfile = open(f'{self.savedir}/indexes/meta_{name}_index.pkl', 'wb')
+            #pickle.dump(empty_list, openfile)
+            #openfile.close()
+            #self.tables['meta_indexes']._insert([table_name, index_name])
+            #print(self.tables['meta_indexes'].show())
+                #delete record of meta_indexes table
+                self.tables['meta_indexes']._delete_where(f'index_name=={name}')
+                #delete pickle file where index is
+                os.remove(f'{self.savedir}/indexes/meta_{name}_index.pkl')
+        except:
+            print('## ERROR - Cant find index.# WARNING: Wrong  index name.')
+
 
 
     def _has_index(self, table_name):
