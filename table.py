@@ -109,6 +109,7 @@ class Table:
             # if value is to be appended to the primary_key column, check that it doesnt alrady exist (no duplicate primary keys)
             if i==self.pk_idx and row[i] in self.columns[self.pk_idx]:
                 raise ValueError(f'## ERROR -> Value {row[i]} already exists in primary key column.')
+            #print("gyftftftyt "+str(row[i]))
 
         # if insert_stack is not empty, append to its last index
         if insert_stack != []:
@@ -221,6 +222,7 @@ class Table:
 
 
         column_name, operator, value = self._parse_condition(condition)
+        print("operator",operator,"value ",value)
 
         print("1: ", type(value), " 2: ", self.column_types[self.column_names.index(column_name)])
 
@@ -261,7 +263,47 @@ class Table:
             return Table(load=dict)
         else:
             return Table(load=dict).order_by(order_by, asc)
+    def _select_where_with_hash(self, return_columns, hs, condition, order_by=None, asc=False, top_k=None):
+            #same as select with BTree but now using hash indexes
+            # if * return all columns, else find the column indexes for the columns specified
+            if return_columns == '*':
+                return_cols = [i for i in range(len(self.column_names))]
+            else:
+                return_cols = [self.column_names.index(colname) for colname in return_columns]
 
+            column_name, operator, value = self._parse_condition(condition)
+
+            print("1: ", type(value), " 2: ", self.column_types[self.column_names.index(column_name)])
+
+            column = self.columns[self.column_names.index(column_name)]
+            # sequential
+            rows1 = []
+            opsseq = 0
+            for ind, x in enumerate(column):
+                opsseq += 1
+                if get_op(operator, x, value):
+                    rows1.append(ind)
+            print(f'Without Hash -> {opsseq} comparison operations')
+
+            # Hash get
+            rows = hs.get(value)
+            print('### Seq result ###')
+            print(rows1)
+            print('### Index result ###')
+            print(rows)
+            # same as simple select from now on
+            rows = rows[:top_k]
+            # TODO: this needs to be dumbed down
+
+            dict = {(key): ([[self.data[i][j] for j in return_cols] for i in rows] if key == "data" else value) for key, value in
+                self.__dict__.items()}
+            dict['column_names'] = [self.column_names[i] for i in return_cols]
+            dict['column_types'] = [self.column_types[i] for i in return_cols]
+            dict['_no_of_columns'] = len(return_cols)
+            if order_by is None:
+                return Table(load=dict)
+            else:
+                return Table(load=dict).order_by(order_by, asc)
 
     def order_by(self, column_name, asc=False):
         '''
@@ -298,6 +340,8 @@ class Table:
             column_index_right = table_right.column_names.index(column_name_right)
         except:
             raise Exception(f'Columns dont exist in one or both tables.')
+        print("left ",column_index_left)
+        print("right ",column_index_right)
 
         # get the column names of both tables with the table name in front
         # ex. for left -> name becomes left_table_name_name etc
@@ -327,7 +371,6 @@ class Table:
         print(f'# Right table size -> {len(table_right.data)}')
 
         return join_table
-
 
     def show(self, no_of_rows=None, is_locked=False):
         '''
